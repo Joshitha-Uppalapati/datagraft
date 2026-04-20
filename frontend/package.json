@@ -1,0 +1,17 @@
+{
+  "name": "datagraft-frontend",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "vite": "5.3.4",
+    "@vitejs/plugin-react": "4.3.1"
+  }
+}
