@@ -1,0 +1,4 @@
+first_name,email,phone,signup_date,amount
+Josh,josh@example.com,1234567890,2024-01-15,$12.50
+,jane@example,123,32/13/2024,$abc
+Josh,josh@example.com,1234567890,2024-01-15,$12.50
