@@ -1,4 +1,3 @@
-import csv
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,6 @@ router = APIRouter(prefix="/api", tags=["validation"])
 def _read_csv(file_path: Path) -> pd.DataFrame:
     return pd.read_csv(
         file_path,
-        quoting=csv.QUOTE_ALL,
         keep_default_na=True,
     )
 
@@ -88,6 +86,7 @@ async def validate_file(
             "total_rows": validation_result["total_rows"],
             "clean_rows": validation_result["clean_rows"],
             "error_rows": validation_result["error_rows"],
+            "errors_truncated": validation_result["errors_truncated"],
         },
         "validation_errors": validation_result["errors"],
     }

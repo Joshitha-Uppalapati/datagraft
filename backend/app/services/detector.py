@@ -6,6 +6,8 @@ import pandas as pd
 
 
 class DetectorService:
+    MIN_TYPE_CONFIDENCE: float = 80.0
+
     EMAIL_REGEX = re.compile(
         r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$",
         re.IGNORECASE,
@@ -34,7 +36,6 @@ class DetectorService:
         "boolean",
         "integer",
         "float",
-        "string",
     )
 
     def detect_series(self, series: pd.Series) -> dict[str, Any]:
@@ -59,22 +60,21 @@ class DetectorService:
             "boolean": self._boolean_confidence,
             "integer": self._integer_confidence,
             "float": self._float_confidence,
-            "string": self._string_confidence,
         }
-
-        best_type = "string"
-        best_confidence = 100.0
 
         for candidate in self.PRIORITY_ORDER:
             confidence = detectors[candidate](string_values)
-            if confidence > 0:
-                best_type = candidate
-                best_confidence = round(confidence, 2)
-                break
+            if confidence >= self.MIN_TYPE_CONFIDENCE:
+                return {
+                    "inferred_type": candidate,
+                    "confidence": round(confidence, 2),
+                    "null_count": null_count,
+                    "sample_values": sample_values,
+                }
 
         return {
-            "inferred_type": best_type,
-            "confidence": best_confidence,
+            "inferred_type": "string",
+            "confidence": 100.0,
             "null_count": null_count,
             "sample_values": sample_values,
         }
@@ -102,15 +102,13 @@ class DetectorService:
 
     def _phone_confidence(self, values: pd.Series) -> float:
         allowed_chars = values.str.fullmatch(self.PHONE_ALLOWED_CHARS_REGEX, na=False)
-
         digits_only = values.str.replace(self.NON_DIGIT_REGEX, "", regex=True)
         valid_digit_length = digits_only.str.len().between(10, 15)
-
         matches = allowed_chars & valid_digit_length
         return self._percentage(matches)
 
     def _date_confidence(self, values: pd.Series) -> float:
-        parsed = pd.to_datetime(values, errors="coerce", infer_datetime_format=True)
+        parsed = pd.to_datetime(values, errors="coerce")
         matches = parsed.notna()
         return self._percentage(matches)
 
@@ -128,7 +126,6 @@ class DetectorService:
 
         finite_mask = pd.Series(np.isfinite(numeric), index=values.index)
         integer_mask = is_not_null & finite_mask & ((numeric % 1) == 0)
-
         return self._percentage(integer_mask)
 
     def _float_confidence(self, values: pd.Series) -> float:
@@ -141,11 +138,6 @@ class DetectorService:
         finite_mask = pd.Series(np.isfinite(numeric), index=values.index)
         float_mask = is_not_null & finite_mask
         return self._percentage(float_mask)
-
-    def _string_confidence(self, values: pd.Series) -> float:
-        if values.empty:
-            return 0.0
-        return 100.0
 
     def _percentage(self, matches: pd.Series) -> float:
         if matches.empty:

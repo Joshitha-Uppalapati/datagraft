@@ -102,6 +102,13 @@ async def confirm_mapping(
             detail="Import session not found.",
         )
 
+    canonical_targets = [item.canonical for item in payload.confirmed_mappings]
+    if len(canonical_targets) != len(set(canonical_targets)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Each canonical target can only be mapped once.",
+        )
+
     metadata_json = import_session.metadata_json or {}
 
     updated_metadata = {

@@ -1,4 +1,3 @@
-import csv
 import hashlib
 import re
 from typing import Any
@@ -33,14 +32,18 @@ class ValidatorService:
 
         errors: list[dict[str, Any]] = []
         rows_with_errors: set[int] = set()
+        total_error_count = 0
 
         duplicate_mask = self._compute_duplicate_mask(df)
 
         for row_index, row in df.iterrows():
             row_has_error = False
 
-            if bool(duplicate_mask.iloc[row_index]):
+            # Using .loc here because upstream filtering can leave labels non-contiguous,
+            # and .iloc will happily point at the wrong row once that happens.
+            if bool(duplicate_mask.loc[row_index]):
                 row_has_error = True
+                total_error_count += 1
                 self._append_error(
                     errors,
                     error_limit,
@@ -66,6 +69,7 @@ class ValidatorService:
                 if self._is_null(raw_value):
                     if required:
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -82,6 +86,7 @@ class ValidatorService:
                 if field_type == "email":
                     if not self._is_valid_email(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -95,6 +100,7 @@ class ValidatorService:
                 elif field_type == "phone":
                     if not self._is_valid_phone(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -108,6 +114,7 @@ class ValidatorService:
                 elif field_type == "date":
                     if not self._is_valid_date(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -121,6 +128,7 @@ class ValidatorService:
                 elif field_type == "integer":
                     if not self._can_cast_integer(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -134,6 +142,7 @@ class ValidatorService:
                 elif field_type == "float":
                     if not self._can_cast_float(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -147,6 +156,7 @@ class ValidatorService:
                 elif field_type == "boolean":
                     if not self._can_cast_boolean(value_str):
                         row_has_error = True
+                        total_error_count += 1
                         self._append_error(
                             errors,
                             error_limit,
@@ -168,6 +178,7 @@ class ValidatorService:
             "total_rows": total_rows,
             "clean_rows": clean_rows,
             "error_rows": error_rows,
+            "errors_truncated": total_error_count > error_limit,
             "errors": errors,
         }
 
@@ -236,11 +247,16 @@ class ValidatorService:
         return value.strip().lower() in {"true", "false", "yes", "no", "y", "n", "t", "f", "1", "0"}
 
     def _compute_duplicate_mask(self, df: pd.DataFrame) -> pd.Series:
-        row_hashes = df.fillna("").astype(str).apply(
-            lambda row: hashlib.sha256("||".join(row.values).encode("utf-8")).hexdigest(),
-            axis=1,
-        )
+        row_hashes = df.fillna("").astype(str).apply(self._row_digest_from_series, axis=1)
         return row_hashes.duplicated(keep="first")
 
+    def _row_digest_from_series(self, row: pd.Series) -> str:
+        # TODO: hashing stringified rows is still brittle; move to tuple(sorted(row.items()))
+        # once we have time to refactor the row-normalization path cleanly.
+        normalized_values = [str(value) for value in row.values]
+        # A null-byte separator avoids accidental collisions from natural text like "a||b".
+        payload = "\x00".join(normalized_values).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
     def _safe_row_repr(self, row: pd.Series) -> str:
-        return str(row.to_dict())
+        return f"row_sha256:{self._row_digest_from_series(row)[:16]}"
