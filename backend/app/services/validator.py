@@ -39,8 +39,7 @@ class ValidatorService:
         for row_index, row in df.iterrows():
             row_has_error = False
 
-            # Using .loc here because upstream filtering can leave labels non-contiguous,
-            # and .iloc will happily point at the wrong row once that happens.
+            # Using .loc because index alignment can drift after filtering; iloc becomes dangerous silently.
             if bool(duplicate_mask.loc[row_index]):
                 row_has_error = True
                 total_error_count += 1
@@ -125,20 +124,6 @@ class ValidatorService:
                             message=f"Value '{value_str}' is not a valid date.",
                         )
 
-                elif field_type == "integer":
-                    if not self._can_cast_integer(value_str):
-                        row_has_error = True
-                        total_error_count += 1
-                        self._append_error(
-                            errors,
-                            error_limit,
-                            row_index=int(row_index),
-                            column=original_column,
-                            value=value_str,
-                            error_type="TYPE_MISMATCH",
-                            message=f"Value '{value_str}' cannot be cast to integer.",
-                        )
-
                 elif field_type == "float":
                     if not self._can_cast_float(value_str):
                         row_has_error = True
@@ -153,26 +138,12 @@ class ValidatorService:
                             message=f"Value '{value_str}' cannot be cast to float.",
                         )
 
-                elif field_type == "boolean":
-                    if not self._can_cast_boolean(value_str):
-                        row_has_error = True
-                        total_error_count += 1
-                        self._append_error(
-                            errors,
-                            error_limit,
-                            row_index=int(row_index),
-                            column=original_column,
-                            value=value_str,
-                            error_type="TYPE_MISMATCH",
-                            message=f"Value '{value_str}' cannot be cast to boolean.",
-                        )
-
             if row_has_error:
                 rows_with_errors.add(int(row_index))
 
-        total_rows = int(len(df))
-        error_rows = int(len(rows_with_errors))
-        clean_rows = int(total_rows - error_rows)
+        total_rows = len(df)
+        error_rows = len(rows_with_errors)
+        clean_rows = total_rows - error_rows
 
         return {
             "total_rows": total_rows,
@@ -182,81 +153,18 @@ class ValidatorService:
             "errors": errors,
         }
 
-    def _append_error(
-        self,
-        errors: list[dict[str, Any]],
-        error_limit: int,
-        row_index: int,
-        column: str,
-        value: Any,
-        error_type: str,
-        message: str,
-    ) -> None:
-        if len(errors) >= error_limit:
-            return
-
-        errors.append(
-            {
-                "row_index": row_index,
-                "column": column,
-                "value": value,
-                "error_type": error_type,
-                "message": message,
-            }
-        )
-
-    def _is_null(self, value: Any) -> bool:
-        if pd.isna(value):
-            return True
-        if isinstance(value, str) and not value.strip():
-            return True
-        return False
-
-    def _is_valid_email(self, value: str) -> bool:
-        return bool(self.EMAIL_REGEX.fullmatch(value))
-
-    def _is_valid_phone(self, value: str) -> bool:
-        if not self.PHONE_ALLOWED_CHARS_REGEX.fullmatch(value):
-            return False
-        digits_only = self.NON_DIGIT_REGEX.sub("", value)
-        return 10 <= len(digits_only) <= 15
-
-    def _is_valid_date(self, value: str) -> bool:
-        parsed = pd.to_datetime(value, errors="coerce")
-        return pd.notna(parsed)
-
-    def _normalize_numeric(self, value: str) -> str:
-        cleaned = self.CURRENCY_SYMBOL_REGEX.sub("", value).strip()
-        if cleaned.startswith("(") and cleaned.endswith(")"):
-            cleaned = f"-{cleaned[1:-1]}"
-        return cleaned
-
-    def _can_cast_integer(self, value: str) -> bool:
-        normalized = self._normalize_numeric(value)
-        numeric = pd.to_numeric(normalized, errors="coerce")
-        if pd.isna(numeric):
-            return False
-        return float(numeric).is_integer()
-
-    def _can_cast_float(self, value: str) -> bool:
-        normalized = self._normalize_numeric(value)
-        numeric = pd.to_numeric(normalized, errors="coerce")
-        return pd.notna(numeric)
-
-    def _can_cast_boolean(self, value: str) -> bool:
-        return value.strip().lower() in {"true", "false", "yes", "no", "y", "n", "t", "f", "1", "0"}
-
     def _compute_duplicate_mask(self, df: pd.DataFrame) -> pd.Series:
         row_hashes = df.fillna("").astype(str).apply(self._row_digest_from_series, axis=1)
         return row_hashes.duplicated(keep="first")
 
     def _row_digest_from_series(self, row: pd.Series) -> str:
         # TODO: hashing stringified rows is still brittle; move to tuple(sorted(row.items()))
-        # once we have time to refactor the row-normalization path cleanly.
         normalized_values = [str(value) for value in row.values]
-        # A null-byte separator avoids accidental collisions from natural text like "a||b".
         payload = "\x00".join(normalized_values).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
     def _safe_row_repr(self, row: pd.Series) -> str:
-        return f"row_sha256:{self._row_digest_from_series(row)[:16]}"
+        # We must normalize EXACTLY like duplicate detection or hashes won't match.
+        normalized = row.fillna("").astype(str)
+        digest = self._row_digest_from_series(normalized)
+        return f"row_sha256:{digest[:16]}"
