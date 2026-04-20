@@ -83,3 +83,44 @@ async def upload_file(
         "filename": file.filename,
         "size_bytes": total_bytes,
     }
+    
+@router.get("/history")
+async def get_import_history(
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ImportSession)
+        .order_by(ImportSession.created_at.desc())
+        .limit(20)
+    )
+    sessions = result.scalars().all()
+
+    if not sessions:
+        return []
+
+    response = []
+
+    for session in sessions:
+        metadata = session.metadata_json or {}
+
+        summary = metadata.get("validation_summary")
+        if summary:
+            validation_summary = {
+                "total_rows": summary.get("total_rows"),
+                "clean_rows": summary.get("clean_rows"),
+                "error_rows": summary.get("error_rows"),
+            }
+        else:
+            validation_summary = None
+
+        response.append({
+            "file_id": str(session.id),
+            "filename": session.filename,
+            "state": session.state,
+            "row_count": session.row_count,
+            "col_count": session.col_count,
+            "created_at": session.created_at.isoformat(),
+            "validation_summary": validation_summary,
+        })
+
+    return response
