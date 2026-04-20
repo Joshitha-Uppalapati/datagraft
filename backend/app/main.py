@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 
 from app.config import settings
+from app.routers.detect import router as detect_router
 from app.routers.upload import router as upload_router
 
 app = FastAPI(title=settings.app_name)
 
 app.include_router(upload_router)
+app.include_router(detect_router)
 
 
 @app.get("/health")
