@@ -1,7 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
 
-function ValidationPage({ fileId, onValidationDone }) {
+function ValidationPage({ fileId, onProceedToExport }) {
   const [result, setResult] = useState(null);
 
   const runValidation = async () => {
@@ -47,7 +47,10 @@ function ValidationPage({ fileId, onValidationDone }) {
             </tbody>
           </table>
 
-          <button onClick={onValidationDone}>
+          <button 
+            onClick={onProceedToExport}
+            className = "mt-6 rounded bg-slate-900 px-4 py-2 text-white">
+            
             Proceed to Export
           </button>
         </>
