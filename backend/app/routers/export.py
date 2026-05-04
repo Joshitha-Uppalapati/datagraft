@@ -48,14 +48,28 @@ def _build_clean_export(
 
     return clean_df.rename(columns=rename_map)
 
+def _stream_csv(df, chunk_size: int = 1000):
+    import io
 
-def _stream_csv(df: pd.DataFrame) -> Iterator[str]:
     buffer = io.StringIO()
-    df.to_csv(buffer, index=False)
-    buffer.seek(0)
 
-    while chunk := buffer.read(8192):
-        yield chunk
+    # write header once
+    df.head(0).to_csv(buffer, index=False)
+    yield buffer.getvalue().encode()
+    buffer.seek(0)
+    buffer.truncate(0)
+
+    total_rows = len(df)
+
+    for start in range(0, total_rows, chunk_size):
+        chunk = df.iloc[start:start + chunk_size]
+
+        chunk.to_csv(buffer, index=False, header=False)
+
+        yield buffer.getvalue().encode()
+
+        buffer.seek(0)
+        buffer.truncate(0)
 
 
 @router.get("/export/{file_id}")
