@@ -1,6 +1,7 @@
 import { useState } from "react";
 import UploadPage from "./UploadPage";
 import MappingPage from "./MappingPage";
+import ValidationPage from "./ValidationPage";
 
 function App() {
   const [step, setStep] = useState("upload");
@@ -15,7 +16,7 @@ function App() {
     setStep("validation");
   };
 
-  const handleValidationComplete = () => {
+  const handleValidationDone = () => {
     setStep("export");
   };
 
@@ -27,24 +28,31 @@ function App() {
         <UploadPage onUploadSuccess={handleUploadSuccess} />
       )}
 
-      {step === "mapping" && (
+      {step === "mapping" && fileId && (
         <MappingPage
-        fileId={fileId}
-        onMappingConfirmed={handleMappingConfirmed}
-      />  
-    )}
-
-      {step === "validation" && (
-        <div>
-          <h2>Validation Step</h2>
-          <p>fileId: {fileId}</p>
-        </div>
+          fileId={fileId}
+          onMappingConfirmed={handleMappingConfirmed}
+        />
       )}
 
-      {step === "export" && (
+      {step === "validation" && fileId && (
+        <ValidationPage
+          fileId={fileId}
+          onValidationDone={handleValidationDone}
+        />
+      )}
+
+      {step === "export" && fileId && (
         <div>
           <h2>Export Step</h2>
           <p>fileId: {fileId}</p>
+          <a
+            href={`http://localhost:8000/api/export/${fileId}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Download Clean CSV
+          </a>
         </div>
       )}
     </div>
