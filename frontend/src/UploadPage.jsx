@@ -1,33 +1,81 @@
 import { useState } from "react";
 import axios from "axios";
 
-function UploadPage({ onUploadSuccess }) {
+function UploadPage({ onSuccess }) {
   const [file, setFile] = useState(null);
+  const [error, setError] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file) {
+      setError("Choose a file first.");
+      return;
+    }
 
-    const formData = new FormData();
-    formData.append("file", file);
+    setError("");
+    setIsUploading(true);
 
-    const res = await axios.post(
-      "http://localhost:8000/api/upload",
-      formData
-    );
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    onUploadSuccess(res.data);
+      const uploadRes = await axios.post(
+        "http://localhost:8000/api/upload",
+        formData
+      );
+
+      const fileId = uploadRes.data.file_id;
+
+      const detectRes = await axios.get(
+        `http://localhost:8000/api/detect/${fileId}`
+      );
+
+      onSuccess({
+        file_id: fileId,
+        detected_columns: detectRes.data.columns || [],
+      });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setError(
+        typeof detail === "string" ? detail : "Upload failed. Check the file and try again."
+      );
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
     <div>
-      <h2>Upload</h2>
+      <h2 className="text-xl font-semibold text-slate-900">Upload</h2>
 
-      <input
-        type="file"
-        onChange={(e) => setFile(e.target.files[0])}
-      />
+      <div className="mt-4">
+        <input
+          type="file"
+          accept=".csv,.xls,.xlsx"
+          onChange={(event) => setFile(event.target.files?.[0] || null)}
+        />
+      </div>
 
-      <button onClick={handleUpload}>Upload</button>
+      {file && (
+        <p className="mt-2 text-sm text-slate-600">
+          Selected: {file.name}
+        </p>
+      )}
+
+      {error && (
+        <div className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={handleUpload}
+        disabled={isUploading}
+        className="mt-6 rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50"
+      >
+        {isUploading ? "Uploading..." : "Upload"}
+      </button>
     </div>
   );
 }
