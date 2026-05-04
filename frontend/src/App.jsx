@@ -1,30 +1,146 @@
-import { useState } from "react"
+import { useState } from "react";
+import axios from "axios";
 
-// Page flow: upload → mapping → validation → export
-// Using simple string state instead of a router to keep 
-// dependencies minimal — this is a single-flow wizard, not a SPA.
-const PAGES = {
-  UPLOAD: "upload",
-  MAPPING: "mapping",
-  VALIDATION: "validation",
-  EXPORT: "export",
-}
+function App() {
+  const [file, setFile] = useState(null);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [detectResult, setDetectResult] = useState(null);
+  const [mappingResult, setMappingResult] = useState(null);
+  const [confirmResult, setConfirmResult] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-export default function App() {
-  const [page, setPage] = useState(PAGES.UPLOAD)
-  const [sessionData, setSessionData] = useState(null)
+  const handleUpload = async () => {
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      setLoading(true);
+      const res = await axios.post(
+        "http://localhost:8000/api/upload",
+        formData
+      );
+
+      setUploadResult(res.data);
+      setDetectResult(null);
+      setMappingResult(null);
+      setConfirmResult(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDetect = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(
+        `http://localhost:8000/api/detect/${uploadResult.file_id}`
+      );
+
+      setDetectResult(res.data);
+    } catch (err) {
+      setDetectResult({
+        error: err?.response?.data?.detail || "detect failed",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMap = async () => {
+    try {
+      setLoading(true);
+
+      const payload = {
+        target_schema: [
+          { name: "first_name", type: "string", required: true, variants: [] },
+          { name: "email", type: "email", required: true, variants: [] },
+          { name: "phone", type: "phone", required: true, variants: [] },
+          { name: "signup_date", type: "date", required: true, variants: [] },
+          { name: "amount", type: "float", required: true, variants: [] },
+        ],
+      };
+
+      const res = await axios.post(
+        `http://localhost:8000/api/map/${uploadResult.file_id}`,
+        payload
+      );
+
+      setMappingResult(res.data);
+    } catch (err) {
+      setMappingResult({
+        error: err?.response?.data?.detail || "mapping failed",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    try {
+      setLoading(true);
+
+      const res = await axios.post(
+        `http://localhost:8000/api/map/${uploadResult.file_id}/confirm`,
+        {
+          auto_confirm: true,
+        }
+      );
+
+      setConfirmResult(res.data);
+    } catch (err) {
+      setConfirmResult({
+        error: err?.response?.data?.detail || "confirm failed",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {page === PAGES.UPLOAD && (
-        <div>Upload page coming soon</div>
+    <div style={{ padding: 40 }}>
+      <h1>DataGraft</h1>
+
+      <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+      <button onClick={handleUpload} disabled={loading}>
+        Upload
+      </button>
+
+      {uploadResult && (
+        <>
+          <pre>{JSON.stringify(uploadResult, null, 2)}</pre>
+          <button onClick={handleDetect} disabled={loading}>
+            Run Detection
+          </button>
+        </>
       )}
-      {page === PAGES.MAPPING && (
-        <div>Mapping page coming soon</div>
+
+      {detectResult && (
+        <>
+          <pre>{JSON.stringify(detectResult, null, 2)}</pre>
+          <button onClick={handleMap} disabled={loading}>
+            Run Mapping
+          </button>
+        </>
       )}
-      {page === PAGES.VALIDATION && (
-        <div>Validation page coming soon</div>
+
+      {mappingResult && (
+        <>
+          <pre>{JSON.stringify(mappingResult, null, 2)}</pre>
+          <button onClick={handleConfirm} disabled={loading}>
+            Confirm Mapping
+          </button>
+        </>
+      )}
+
+      {confirmResult && (
+        <pre>{JSON.stringify(confirmResult, null, 2)}</pre>
       )}
     </div>
-  )
+  );
 }
+
+export default App;

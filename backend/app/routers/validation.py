@@ -97,9 +97,9 @@ async def validate_file(
             "clean_rows": validation_result["clean_rows"],
             "error_rows": validation_result["error_rows"],
             "errors_truncated": validation_result["errors_truncated"],
-            "all_error_indices": validation_result["all_error_indices"],
         },
         "validation_errors": validation_result["errors"],
+        "all_error_indices": validation_result["all_error_indices"],
     }
 
     import_session.state = "VALIDATED"
