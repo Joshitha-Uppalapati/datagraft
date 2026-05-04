@@ -1,11 +1,12 @@
 import io
 import uuid
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Iterator
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,115 +16,135 @@ from app.models import ImportSession
 router = APIRouter(prefix="/api", tags=["export"])
 
 
-def _dataframe_to_csv_stream(df: pd.DataFrame) -> Iterable[bytes]:
-    """
-    Stream DataFrame as CSV in chunks instead of building a giant string.
+def _read_source_file(file_path: Path) -> pd.DataFrame:
+    ext = file_path.suffix.lower()
 
-    Why: Returning bytes means constructing the full CSV in memory first.
-    That works for small files, but explodes for large datasets (100MB+).
-    This approach writes progressively and yields chunks, which is safer
-    under memory pressure and aligns with how real data pipelines behave.
-    """
+    if ext == ".csv":
+        return pd.read_csv(file_path, keep_default_na=True)
+
+    if ext in {".xls", ".xlsx"}:
+        return pd.read_excel(file_path)
+
+    raise ValueError(f"Unsupported stored file type: {ext}")
+
+
+def _build_clean_export(
+    df: pd.DataFrame,
+    confirmed_mappings: list[dict],
+    all_error_indices: list[int],
+) -> pd.DataFrame:
+    df_working = df.reset_index(drop=True)
+
+    clean_df = df_working.drop(
+        index=set(all_error_indices),
+        errors="ignore",
+    )
+
+    rename_map = {
+        item["original"]: item["canonical"]
+        for item in confirmed_mappings
+        if item.get("original") and item.get("canonical")
+    }
+
+    return clean_df.rename(columns=rename_map)
+
+
+def _stream_csv(df: pd.DataFrame) -> Iterator[str]:
     buffer = io.StringIO()
-
-    # write header once
-    df.iloc[:0].to_csv(buffer, index=False)
-    yield buffer.getvalue().encode()
+    df.to_csv(buffer, index=False)
     buffer.seek(0)
-    buffer.truncate(0)
 
-    # stream row batches
-    chunk_size = 1000
-    for start in range(0, len(df), chunk_size):
-        chunk = df.iloc[start:start + chunk_size]
-        chunk.to_csv(buffer, index=False, header=False)
-        yield buffer.getvalue().encode()
-        buffer.seek(0)
-        buffer.truncate(0)
+    while chunk := buffer.read(8192):
+        yield chunk
 
 
 @router.get("/export/{file_id}")
-async def export_clean_csv(
+async def export_clean_file(
     file_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    # fetch session
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
     )
     import_session = result.scalar_one_or_none()
 
-    if not import_session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Import session not found.",
-        )
+    if import_session is None:
+        raise HTTPException(status_code=404, detail="Import session not found.")
 
     if import_session.state != "VALIDATED":
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Run validation before exporting.",
+            status_code=400,
+            detail="Validation incomplete - cannot export yet.",
         )
 
-    metadata = import_session.metadata_json or {}
-    validation_errors = metadata.get("validation_errors", [])
-    confirmed_mappings = metadata.get("confirmed_mappings", [])
+    metadata_json = import_session.metadata_json or {}
+    validation_summary = metadata_json.get("validation_summary")
+    confirmed_mappings = metadata_json.get("confirmed_mappings")
+    all_error_indices = metadata_json.get("all_error_indices")
 
-    # load dataframe
-    try:
-        df = await run_in_threadpool(
-            pd.read_csv,
-            import_session.stored_path,
-            keep_default_na=True,
-        )
-    except Exception as e:
+    if not validation_summary:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to read stored file: {str(e)}",
+            detail="Validation summary missing - export blocked.",
         )
 
-    # compute error rows 
-    error_indices = {
-        err["row_index"]
-        for err in validation_errors
-        if "row_index" in err
-    }
+    if confirmed_mappings is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirmed mappings missing - export blocked.",
+        )
 
-    # filter clean rows
-    clean_df = await run_in_threadpool(
-        lambda: df.loc[~df.index.isin(error_indices)]
-    )
+    if all_error_indices is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Validation row index list missing - export blocked.",
+        )
+
+    file_path = Path(import_session.stored_path)
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=410,
+            detail="Stored upload is gone - cannot export.",
+        )
+
+    try:
+        df = await run_in_threadpool(_read_source_file, file_path)
+        clean_df = await run_in_threadpool(
+            _build_clean_export,
+            df,
+            confirmed_mappings,
+            all_error_indices,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Export failed while reading source data: {str(exc)}",
+        )
 
     if clean_df.empty:
         raise HTTPException(
             status_code=400,
-            detail="No clean rows available for export.",
+            detail="No clean rows left to export.",
         )
 
-    # rename columns
-    rename_map = {
-        item["original"]: item["canonical"]
-        for item in confirmed_mappings
-    }
-
-    clean_df = await run_in_threadpool(
-        lambda: clean_df.rename(columns=rename_map)
-    )
-
-    # streaming response 
-    response = StreamingResponse(
-        _dataframe_to_csv_stream(clean_df),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=datagraft_clean_{file_id}.csv"
-        },
-    )
-
-    # update state
     import_session.state = "EXPORTED"
+
     try:
         await db.commit()
-    except Exception:
+    except Exception as exc:
         await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Export state update failed: {str(exc)}",
+        )
 
-    return response
+    filename = f"datagraft_clean_{file_id}.csv"
+
+    return StreamingResponse(
+        _stream_csv(clean_df),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
+    )
