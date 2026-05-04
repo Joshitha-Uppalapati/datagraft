@@ -1,19 +1,15 @@
 from fastapi import FastAPI
 
-from app.config import settings
-from app.routers.detect import router as detect_router
-from app.routers.mapping import router as mapping_router
-from app.routers.upload import router as upload_router
-from app.routers.validation import router as validation_router
+from app.routers import upload, detect, mapping, validation, export
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI()
 
-app.include_router(upload_router)
-app.include_router(detect_router)
-app.include_router(mapping_router)
-app.include_router(validation_router)
-
+app.include_router(upload.router)
+app.include_router(detect.router)
+app.include_router(mapping.router)
+app.include_router(validation.router)
+app.include_router(export.router)
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health_check():
     return {"status": "ok"}

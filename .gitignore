@@ -1,1 +1,8 @@
 .env
+
+# local data artifacts
+data/
+test-data/
+*.csv
+
+.DS_Store

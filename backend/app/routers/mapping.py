@@ -13,6 +13,8 @@ from app.services.mapper import MapperService
 router = APIRouter(prefix="/api/map", tags=["mapping"])
 
 
+# Request / Response Schemas
+
 class TargetSchemaField(BaseModel):
     name: str
     type: str
@@ -30,8 +32,11 @@ class ConfirmedMappingItem(BaseModel):
 
 
 class ConfirmMappingRequest(BaseModel):
-    confirmed_mappings: list[ConfirmedMappingItem]
+    confirmed_mappings: list[ConfirmedMappingItem] | None = None
+    auto_confirm: bool = False   # 👈 key addition
 
+
+# Step 1 Generate Suggestions
 
 @router.post("/{file_id}")
 async def generate_mapping_suggestions(
@@ -39,6 +44,14 @@ async def generate_mapping_suggestions(
     payload: MappingRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    """
+    Generate mapping suggestions between detected columns and target schema.
+
+    Stores:
+    - mapping_suggestions
+    - target_schema
+    """
+
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
     )
@@ -60,11 +73,13 @@ async def generate_mapping_suggestions(
         )
 
     mapper = MapperService()
+
     mappings = mapper.suggest_mappings(
         detected_columns=detected_columns,
         target_schema=[field.model_dump() for field in payload.target_schema],
     )
 
+    # Persist suggestions
     updated_metadata = {
         **metadata_json,
         "mapping_suggestions": mappings,
@@ -85,12 +100,22 @@ async def generate_mapping_suggestions(
     return {"mappings": mappings}
 
 
+# Step 2 Confirming Mappings
+
 @router.post("/{file_id}/confirm")
 async def confirm_mapping(
     file_id: uuid.UUID,
     payload: ConfirmMappingRequest,
     db: AsyncSession = Depends(get_db),
-) -> dict[str, bool]:
+) -> dict[str, Any]:
+    """
+    Confirm mappings.
+
+    Supports:
+    1. Manual confirmation (explicit payload)
+    2. Auto-confirm (use suggestions directly)
+    """
+
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
     )
@@ -102,18 +127,47 @@ async def confirm_mapping(
             detail="Import session not found.",
         )
 
-    canonical_targets = [item.canonical for item in payload.confirmed_mappings]
-    if len(canonical_targets) != len(set(canonical_targets)):
+    metadata_json = import_session.metadata_json or {}
+    suggestions = metadata_json.get("mapping_suggestions")
+
+    if not suggestions:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Each canonical target can only be mapped once.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No mapping suggestions found. Run mapping step first.",
         )
 
-    metadata_json = import_session.metadata_json or {}
+    # Case 1: Auto-confirm
+    if payload.auto_confirm:
+        confirmed = [
+            {
+                "original": item["original"],
+                "canonical": item["suggested_canonical"],
+            }
+            for item in suggestions
+        ]
 
+    # Case 2: Manual confirmation
+    else:
+        if not payload.confirmed_mappings:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide confirmed_mappings or set auto_confirm=true.",
+            )
+
+        canonical_targets = [item.canonical for item in payload.confirmed_mappings]
+
+        if len(canonical_targets) != len(set(canonical_targets)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Each canonical target can only be mapped once.",
+            )
+
+        confirmed = [item.model_dump() for item in payload.confirmed_mappings]
+
+    # Persist confirmed mappings
     updated_metadata = {
         **metadata_json,
-        "confirmed_mappings": [item.model_dump() for item in payload.confirmed_mappings],
+        "confirmed_mappings": confirmed,
     }
 
     import_session.metadata_json = updated_metadata
@@ -128,4 +182,7 @@ async def confirm_mapping(
             detail=f"Failed to persist confirmed mappings: {str(exc)}",
         )
 
-    return {"confirmed": True}
+    return {
+        "confirmed": True,
+        "count": len(confirmed),
+    }
