@@ -11,3 +11,5 @@ rapidfuzz==3.9.3
 openpyxl==3.1.5
 xlrd==2.0.1
 numpy
+pytest
+httpx
