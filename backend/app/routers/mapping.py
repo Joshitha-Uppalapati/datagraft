@@ -13,8 +13,6 @@ from app.services.mapper import MapperService
 router = APIRouter(prefix="/api/map", tags=["mapping"])
 
 
-# Request / Response Schemas
-
 class TargetSchemaField(BaseModel):
     name: str
     type: str
@@ -33,10 +31,8 @@ class ConfirmedMappingItem(BaseModel):
 
 class ConfirmMappingRequest(BaseModel):
     confirmed_mappings: list[ConfirmedMappingItem] | None = None
-    auto_confirm: bool = False   # 👈 key addition
+    auto_confirm: bool = False
 
-
-# Step 1 Generate Suggestions
 
 @router.post("/{file_id}")
 async def generate_mapping_suggestions(
@@ -44,13 +40,6 @@ async def generate_mapping_suggestions(
     payload: MappingRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """
-    Generate mapping suggestions between detected columns and target schema.
-
-    Stores:
-    - mapping_suggestions
-    - target_schema
-    """
 
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
@@ -63,13 +52,19 @@ async def generate_mapping_suggestions(
             detail="Import session not found.",
         )
 
+    if import_session.state != "DETECTED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid state '{import_session.state}'. Mapping requires 'DETECTED'.",
+        )
+
     metadata_json = import_session.metadata_json or {}
     detected_columns = metadata_json.get("detected_schema")
 
     if not detected_columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Detected schema not found. Run column detection first.",
+            detail="Detected schema missing. Run detection first.",
         )
 
     mapper = MapperService()
@@ -79,7 +74,6 @@ async def generate_mapping_suggestions(
         target_schema=[field.model_dump() for field in payload.target_schema],
     )
 
-    # Persist suggestions
     updated_metadata = {
         **metadata_json,
         "mapping_suggestions": mappings,
@@ -87,6 +81,7 @@ async def generate_mapping_suggestions(
     }
 
     import_session.metadata_json = updated_metadata
+    import_session.state = "MAPPED"
 
     try:
         await db.commit()
@@ -100,21 +95,12 @@ async def generate_mapping_suggestions(
     return {"mappings": mappings}
 
 
-# Step 2 Confirming Mappings
-
 @router.post("/{file_id}/confirm")
 async def confirm_mapping(
     file_id: uuid.UUID,
     payload: ConfirmMappingRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """
-    Confirm mappings.
-
-    Supports:
-    1. Manual confirmation (explicit payload)
-    2. Auto-confirm (use suggestions directly)
-    """
 
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
@@ -127,16 +113,21 @@ async def confirm_mapping(
             detail="Import session not found.",
         )
 
+    if import_session.state != "MAPPED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid state '{import_session.state}'. Mapping confirmation requires 'MAPPED'.",
+        )
+
     metadata_json = import_session.metadata_json or {}
     suggestions = metadata_json.get("mapping_suggestions")
 
     if not suggestions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No mapping suggestions found. Run mapping step first.",
+            detail="Mapping suggestions missing. Run mapping first.",
         )
 
-    # Case 1: Auto-confirm
     if payload.auto_confirm:
         confirmed = [
             {
@@ -145,8 +136,6 @@ async def confirm_mapping(
             }
             for item in suggestions
         ]
-
-    # Case 2: Manual confirmation
     else:
         if not payload.confirmed_mappings:
             raise HTTPException(
@@ -159,12 +148,11 @@ async def confirm_mapping(
         if len(canonical_targets) != len(set(canonical_targets)):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Each canonical target can only be mapped once.",
+                detail="Duplicate canonical targets are not allowed.",
             )
 
         confirmed = [item.model_dump() for item in payload.confirmed_mappings]
 
-    # Persist confirmed mappings
     updated_metadata = {
         **metadata_json,
         "confirmed_mappings": confirmed,

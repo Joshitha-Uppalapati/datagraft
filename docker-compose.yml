@@ -36,7 +36,6 @@ services:
     volumes:
       - ./backend:/app
       - ./data:/data
-    platform: linux/arm64
 
 
   frontend:
