@@ -34,6 +34,7 @@ function App() {
   const handleRestart = () => {
     setPage(PAGES.UPLOAD);
     setFileId(null);
+    setDetectedColumns([]);
     setValidationSummary(null);
   };
 
@@ -75,17 +76,16 @@ function App() {
               fileId={fileId}
               onProceedToExport={(summary) => {
                 setValidationSummary(summary);
-                setPage(PAGES.EXPORT)
-              
+                setPage(PAGES.EXPORT);
               }}
             />
           )}
 
           {page === PAGES.EXPORT && fileId && (
             <ExportPage
-            fileId={fileId}
-            validationSummary={validationSummary}
-            onRestart={handleRestart}
+              fileId={fileId}
+              validationSummary={validationSummary}
+              onRestart={handleRestart}
             />
           )}
         </section>
