@@ -22,17 +22,19 @@ function App() {
   const [page, setPage] = useState(PAGES.UPLOAD);
   const [fileId, setFileId] = useState(null);
   const [detectedColumns, setDetectedColumns] = useState([]);
+  const [validationSummary, setValidationSummary] = useState(null);
 
   const handleUploadSuccess = (data) => {
     setFileId(data.file_id);
     setDetectedColumns(data.detected_columns || data.columns || []);
+    setValidationSummary(null);
     setPage(PAGES.MAPPING);
   };
 
   const handleRestart = () => {
     setPage(PAGES.UPLOAD);
     setFileId(null);
-    setDetectedColumns([]);
+    setValidationSummary(null);
   };
 
   return (
@@ -71,12 +73,20 @@ function App() {
           {page === PAGES.VALIDATION && fileId && (
             <ValidationPage
               fileId={fileId}
-              onProceedToExport={() => setPage(PAGES.EXPORT)}
+              onProceedToExport={(summary) => {
+                setValidationSummary(summary);
+                setPage(PAGES.EXPORT)
+              
+              }}
             />
           )}
 
           {page === PAGES.EXPORT && fileId && (
-            <ExportPage fileId={fileId} onRestart={handleRestart} />
+            <ExportPage
+            fileId={fileId}
+            validationSummary={validationSummary}
+            onRestart={handleRestart}
+            />
           )}
         </section>
       </div>

@@ -5,6 +5,7 @@ function ValidationPage({ fileId, onProceedToExport }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [errorTypeFilter, setErrorTypeFilter] = useState("all");
 
   useEffect(() => {
     const runValidation = async () => {
@@ -17,7 +18,7 @@ function ValidationPage({ fileId, onProceedToExport }) {
         );
         setData(res.data);
       } catch (err) {
-        setError(err?.response?.data?.detail || "Validation failed");
+        setError(err?.response?.data?.detail || "Validation failed.");
       } finally {
         setLoading(false);
       }
@@ -27,35 +28,42 @@ function ValidationPage({ fileId, onProceedToExport }) {
   }, [fileId]);
 
   if (loading) {
-    return <p className="mt-6">Running validation...</p>;
+    return <p className="mt-6 text-slate-600">Running validation...</p>;
   }
 
   if (error) {
     return (
-      <div className="mt-6 p-4 bg-red-100 text-red-700 rounded">
+      <div className="mt-6 rounded border border-red-300 bg-red-50 p-4 text-red-700">
         {error}
       </div>
     );
   }
 
+  const errorTypes = [...new Set(data.errors.map((item) => item.error_type))];
+
+  const filteredErrors =
+    errorTypeFilter === "all"
+      ? data.errors
+      : data.errors.filter((item) => item.error_type === errorTypeFilter);
+
   return (
     <div className="mt-6">
-      <h2 className="text-xl font-semibold mb-4">Validation</h2>
+      <h2 className="mb-4 text-xl font-semibold">Validation</h2>
 
-      <div className="mb-6 grid grid-cols-3 gap-4">
-        <div className="p-4 border rounded">
+      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded border p-4">
           <p className="text-sm text-gray-500">Total Rows</p>
           <p className="text-lg font-semibold">{data.total_rows}</p>
         </div>
 
-        <div className="p-4 border rounded">
+        <div className="rounded border p-4">
           <p className="text-sm text-gray-500">Clean Rows</p>
           <p className="text-lg font-semibold text-green-600">
             {data.clean_rows}
           </p>
         </div>
 
-        <div className="p-4 border rounded">
+        <div className="rounded border p-4">
           <p className="text-sm text-gray-500">Error Rows</p>
           <p className="text-lg font-semibold text-red-600">
             {data.error_rows}
@@ -64,8 +72,29 @@ function ValidationPage({ fileId, onProceedToExport }) {
       </div>
 
       {data.errors.length > 0 && (
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-gray-50 border-b">
+        <div className="mb-4">
+          <label className="mr-2 text-sm text-gray-600">
+            Filter by error type:
+          </label>
+
+          <select
+            value={errorTypeFilter}
+            onChange={(event) => setErrorTypeFilter(event.target.value)}
+            className="rounded border px-3 py-2"
+          >
+            <option value="all">All errors</option>
+            {errorTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {filteredErrors.length > 0 ? (
+        <table className="w-full border-collapse text-left">
+          <thead className="border-b bg-gray-50">
             <tr>
               <th className="px-4 py-2">Row</th>
               <th className="px-4 py-2">Column</th>
@@ -75,8 +104,8 @@ function ValidationPage({ fileId, onProceedToExport }) {
           </thead>
 
           <tbody>
-            {data.errors.map((err, idx) => (
-              <tr key={idx} className="border-b">
+            {filteredErrors.map((err, idx) => (
+              <tr key={`${err.row_index}-${err.column}-${idx}`} className="border-b">
                 <td className="px-4 py-2">{err.row_index}</td>
                 <td className="px-4 py-2">{err.column}</td>
                 <td className="px-4 py-2">{err.error_type}</td>
@@ -85,10 +114,14 @@ function ValidationPage({ fileId, onProceedToExport }) {
             ))}
           </tbody>
         </table>
+      ) : (
+        <p className="text-sm text-gray-600">
+          No errors match this filter.
+        </p>
       )}
 
       <button
-        onClick={onProceedToExport}
+        onClick={() => onProceedToExport(data)}
         className="mt-6 rounded bg-slate-900 px-4 py-2 text-white"
       >
         Proceed to Export
