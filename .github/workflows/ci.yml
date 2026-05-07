@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: datagraft
+          POSTGRES_USER: datagraft
+          POSTGRES_PASSWORD: datagraft
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U datagraft -d datagraft"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_DB: datagraft
+      POSTGRES_USER: datagraft
+      POSTGRES_PASSWORD: datagraft
+      DATABASE_URL: postgresql+asyncpg://datagraft:datagraft@localhost:5432/datagraft
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: check out code
+        uses: actions/checkout@v4
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: run migrations
+        run: alembic upgrade head
+
+      - name: run backend tests
+        run: pytest
