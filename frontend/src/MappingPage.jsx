@@ -151,7 +151,6 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
   return (
     <div className="mt-6">
       <h2 className="mb-2 text-xl font-semibold">Mapping</h2>
-      <p className="mb-4 text-sm text-gray-500">fileId: {fileId}</p>
 
       <div className="mb-4 flex items-center gap-3">
         <select

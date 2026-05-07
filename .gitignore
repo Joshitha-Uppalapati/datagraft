@@ -5,8 +5,8 @@ data/
 test-data/
 *.csv
 
-.DS_Storedata/
-fbc6c84f-*
+.DS_Store
+data/
 
 # Demo fixtures committed for DataGraft walkthroughs
 !test-data/

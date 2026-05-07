@@ -2,31 +2,23 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils import read_file
 from app.database import get_db
 from app.models import ImportSession
 from app.services.detector import DetectorService
 
 router = APIRouter(prefix="/api", tags=["detection"])
 
-
-def _read_file(file_path: Path) -> pd.DataFrame:
-    if file_path.suffix.lower() == ".csv":
-        return pd.read_csv(file_path)
-    return pd.read_excel(file_path)
-
-
 @router.get("/detect/{file_id}")
 async def detect_columns(
     file_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    # Fetch session
     result = await db.execute(
         select(ImportSession).where(ImportSession.id == file_id)
     )
@@ -38,7 +30,6 @@ async def detect_columns(
             detail="Import session not found.",
         )
 
-    # State guard
     if import_session.state != "UPLOADED":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -47,22 +38,16 @@ async def detect_columns(
 
     file_path = Path(import_session.stored_path)
 
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail="Uploaded file is no longer available on disk.",
-        )
-
-    # Load file safely
     try:
-        df = await run_in_threadpool(_read_file, file_path)
+        df = await run_in_threadpool(read_file, str(file_path))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to read file for detection: {str(exc)}",
         )
 
-    # Run detection 
     detector = DetectorService()
     detected_schema = await run_in_threadpool(detector.detect_dataframe, df)
 
@@ -73,7 +58,6 @@ async def detect_columns(
         "detected_schema": detected_schema,
     }
 
-    # Advance state
     import_session.state = "DETECTED"
 
     try:
