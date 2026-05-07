@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
@@ -9,8 +10,7 @@ class ValidatorService:
         r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
     )
 
-    def _is_null(self, val: Any) -> bool:
-        return pd.isna(val) or str(val).strip() == ""
+    BOOLEAN_VALUES = {"true", "false", "1", "0", "yes", "no"}
 
     def validate_dataframe(
         self,
@@ -19,7 +19,6 @@ class ValidatorService:
         target_schema: list[dict[str, Any]],
         error_limit: int = 100,
     ) -> dict[str, Any]:
-
         mapping_by_original = {
             item["original"]: item["canonical"]
             for item in confirmed_mappings
@@ -30,105 +29,160 @@ class ValidatorService:
             for field in target_schema
         }
 
+        df_working = df.reset_index(drop=True)
+
         errors: list[dict[str, Any]] = []
         all_error_indices: set[int] = set()
         total_error_count = 0
 
-        df_working = df.reset_index(drop=True)
+        def append_errors(
+            mask: pd.Series,
+            column: str,
+            error_type: str,
+            message_for_row,
+        ) -> None:
+            nonlocal total_error_count
+
+            failed_indices = mask[mask].index.tolist()
+
+            if not failed_indices:
+                return
+
+            total_error_count += len(failed_indices)
+            all_error_indices.update(int(index) for index in failed_indices)
+
+            for row_index in failed_indices:
+                if len(errors) >= error_limit:
+                    break
+
+                errors.append(
+                    {
+                        "column": column,
+                        "row_index": int(row_index),
+                        "error_type": error_type,
+                        "message": message_for_row(row_index),
+                    }
+                )
+
         duplicate_mask = df_working.duplicated(keep="first")
 
-        for row_index, row in df_working.iterrows():
-            row_has_error = False
+        append_errors(
+            duplicate_mask,
+            "__row__",
+            "DUPLICATE_ROW",
+            lambda _: "Duplicate row detected.",
+        )
 
-            # Duplicate check
-            if duplicate_mask.iloc[row_index]:
-                row_has_error = True
-                total_error_count += 1
-                all_error_indices.add(row_index)
+        for original_column, canonical_column in mapping_by_original.items():
+            if original_column not in df_working.columns:
+                continue
 
-                if len(errors) < error_limit:
-                    errors.append({
-                        "column": "__row__",
-                        "row_index": row_index,
-                        "error_type": "DUPLICATE_ROW",
-                        "message": "Duplicate row detected.",
-                    })
+            schema = schema_by_name.get(canonical_column)
+            if not schema:
+                continue
 
-            for original_column, canonical_column in mapping_by_original.items():
-                if original_column not in df_working.columns:
-                    continue
+            raw_values = df_working[original_column]
+            values = raw_values.astype("string").str.strip()
 
-                schema = schema_by_name.get(canonical_column)
-                if not schema:
-                    continue
+            null_mask = raw_values.isna() | values.isna() | values.eq("")
+            non_null_mask = ~null_mask
 
-                raw_value = row[original_column]
-                field_type = str(schema.get("type", "string")).lower()
-                required = bool(schema.get("required", False))
+            field_type = str(schema.get("type", "string")).lower()
+            required = bool(schema.get("required", False))
 
-                if self._is_null(raw_value):
-                    if required:
-                        row_has_error = True
-                        total_error_count += 1
-                        all_error_indices.add(row_index)
+            if required:
+                append_errors(
+                    null_mask,
+                    original_column,
+                    "NULL_REQUIRED",
+                    lambda _, name=canonical_column: f"{name} is required.",
+                )
 
-                        if len(errors) < error_limit:
-                            errors.append({
-                                "column": original_column,
-                                "row_index": row_index,
-                                "error_type": "NULL_REQUIRED",
-                                "message": f"{canonical_column} is required.",
-                            })
-                    continue
+            if field_type == "email":
+                valid_mask = values.str.match(self.EMAIL_REGEX, na=False)
+                invalid_mask = non_null_mask & ~valid_mask
 
-                value_str = str(raw_value).strip()
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "INVALID_EMAIL",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} is not a valid email."
+                    ),
+                )
 
-                is_valid = True
-                error_type = ""
-                message = ""
+            elif field_type == "phone":
+                digits = values.str.replace(r"\D", "", regex=True)
+                valid_mask = digits.str.len().between(10, 15)
+                invalid_mask = non_null_mask & ~valid_mask
 
-                if field_type == "email" and not self._is_valid_email(value_str):
-                    is_valid = False
-                    error_type = "INVALID_EMAIL"
-                    message = f"{value_str} is not a valid email."
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "INVALID_PHONE",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} is not a valid phone number."
+                    ),
+                )
 
-                elif field_type == "phone" and not self._is_valid_phone(value_str):
-                    is_valid = False
-                    error_type = "INVALID_PHONE"
-                    message = f"{value_str} is not a valid phone number."
+            elif field_type == "date":
+                parsed = pd.to_datetime(values, errors="coerce")
+                invalid_mask = non_null_mask & parsed.isna()
 
-                elif field_type == "date" and not self._is_valid_date(value_str):
-                    is_valid = False
-                    error_type = "INVALID_DATE"
-                    message = f"{value_str} is not a valid date."
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "INVALID_DATE",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} is not a valid date."
+                    ),
+                )
 
-                elif field_type == "float" and not self._can_cast_float(value_str):
-                    is_valid = False
-                    error_type = "TYPE_MISMATCH"
-                    message = f"{value_str} cannot be cast to float."
+            elif field_type == "float":
+                cleaned = values.str.replace(r"[$,₹€£]", "", regex=True)
+                numeric = pd.to_numeric(cleaned, errors="coerce")
+                invalid_mask = non_null_mask & numeric.isna()
 
-                elif field_type == "integer" and not self._can_cast_int(value_str):
-                    is_valid = False
-                    error_type = "TYPE_MISMATCH"
-                    message = f"{value_str} cannot be cast to integer."
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "TYPE_MISMATCH",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} cannot be cast to float."
+                    ),
+                )
 
-                elif field_type == "boolean" and not self._is_valid_boolean(value_str):
-                    is_valid = False
-                    error_type = "TYPE_MISMATCH"
-                    message = f"{value_str} is not a valid boolean."
+            elif field_type == "integer":
+                numeric = pd.to_numeric(values, errors="coerce")
+                numeric_float = numeric.astype("float64")
+                finite_mask = pd.Series(
+                    np.isfinite(numeric_float),
+                    index=values.index,
+                )
+                integer_mask = numeric.notna() & finite_mask & ((numeric % 1) == 0)
+                invalid_mask = non_null_mask & ~integer_mask
 
-                if not is_valid:
-                    row_has_error = True
-                    total_error_count += 1
-                    all_error_indices.add(row_index)
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "TYPE_MISMATCH",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} cannot be cast to integer."
+                    ),
+                )
 
-                    if len(errors) < error_limit:
-                        errors.append({
-                            "column": original_column,
-                            "row_index": row_index,
-                            "error_type": error_type,
-                            "message": message,
-                        })
+            elif field_type == "boolean":
+                valid_mask = values.str.lower().isin(self.BOOLEAN_VALUES)
+                invalid_mask = non_null_mask & ~valid_mask
+
+                append_errors(
+                    invalid_mask,
+                    original_column,
+                    "TYPE_MISMATCH",
+                    lambda index, series=values: (
+                        f"{series.loc[index]} is not a valid boolean."
+                    ),
+                )
 
         total_rows = len(df_working)
         error_rows = len(all_error_indices)
@@ -139,37 +193,5 @@ class ValidatorService:
             "error_rows": error_rows,
             "errors_truncated": total_error_count > error_limit,
             "errors": errors,
-            "all_error_indices": list(all_error_indices),
+            "all_error_indices": sorted(all_error_indices),
         }
-
-    def _is_valid_email(self, val: str) -> bool:
-        return self.EMAIL_REGEX.match(val) is not None
-
-    def _is_valid_phone(self, val: str) -> bool:
-        digits = re.sub(r"\D", "", val)
-        return 10 <= len(digits) <= 15
-
-    def _is_valid_date(self, val: str) -> bool:
-        try:
-            pd.to_datetime(val, errors="raise")
-            return True
-        except Exception:
-            return False
-
-    def _can_cast_float(self, val: str) -> bool:
-        cleaned = re.sub(r"[$,₹€£]", "", val)
-        try:
-            float(cleaned)
-            return True
-        except ValueError:
-            return False
-
-    def _can_cast_int(self, val: str) -> bool:
-        try:
-            int(float(val))
-            return True
-        except Exception:
-            return False
-
-    def _is_valid_boolean(self, val: str) -> bool:
-        return val.lower() in {"true", "false", "1", "0", "yes", "no"}
