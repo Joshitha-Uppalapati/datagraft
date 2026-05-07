@@ -1,18 +1,17 @@
-
 import { useState } from "react";
 import axios from "axios";
 
 const PRESETS = {
   contact: [
-    { name: "first_name", required: true },
-    { name: "last_name", required: false },
-    { name: "email", required: true },
-    { name: "phone", required: false },
+    { name: "first_name", type: "string", required: true },
+    { name: "last_name", type: "string", required: false },
+    { name: "email", type: "email", required: true },
+    { name: "phone", type: "phone", required: false },
   ],
   transaction: [
-    { name: "date", required: true },
-    { name: "amount", required: true },
-    { name: "description", required: false },
+    { name: "date", type: "date", required: true },
+    { name: "amount", type: "float", required: true },
+    { name: "description", type: "string", required: false },
   ],
 };
 
@@ -25,6 +24,46 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
 
   const selectedSchema = PRESETS[presetKey];
 
+  const selectedCanonicals = localMappings
+    .map((mapping) => mapping.canonical)
+    .filter(Boolean);
+
+  const hasMappings = selectedCanonicals.length > 0;
+
+  const missingRequired = selectedSchema
+    .filter((field) => field.required)
+    .some(
+      (field) =>
+        !localMappings.some((mapping) => mapping.canonical === field.name)
+    );
+
+  const hasDuplicateTargets =
+    selectedCanonicals.length !== new Set(selectedCanonicals).size;
+
+  const confirmDisabled =
+    isSubmitting || !hasMappings || missingRequired || hasDuplicateTargets;
+
+  const formatError = (err, fallback) => {
+    const detail = err?.response?.data?.detail;
+
+    if (typeof detail === "string") {
+      return detail;
+    }
+
+    if (detail) {
+      return JSON.stringify(detail);
+    }
+
+    return fallback;
+  };
+
+  const handlePresetChange = (event) => {
+    setPresetKey(event.target.value);
+    setMappings([]);
+    setLocalMappings([]);
+    setError(null);
+  };
+
   const handleRunMapping = async () => {
     setError(null);
     setIsSubmitting(true);
@@ -33,25 +72,26 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
       const res = await axios.post(
         `http://localhost:8000/api/map/${fileId}`,
         {
-          target_schema: selectedSchema.map((f) => ({
-            name: f.name,
-            type: "string",
-            required: f.required,
+          target_schema: selectedSchema.map((field) => ({
+            name: field.name,
+            type: field.type,
+            required: field.required,
             variants: [],
           })),
         }
       );
 
-      setMappings(res.data.mappings);
+      const apiMappings = res.data.mappings || [];
 
+      setMappings(apiMappings);
       setLocalMappings(
-        res.data.mappings.map((m) => ({
-          original: m.original,
-          canonical: m.suggested_canonical || "",
+        apiMappings.map((mapping) => ({
+          original: mapping.original,
+          canonical: mapping.suggested_canonical || "",
         }))
       );
     } catch (err) {
-      setError(err?.response?.data?.detail || "Mapping failed");
+      setError(formatError(err, "Mapping failed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -60,28 +100,36 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
   const handleConfirm = async () => {
     setError(null);
 
-    const missingRequired = selectedSchema
-      .filter((f) => f.required)
-      .some(
-        (f) => !localMappings.find((m) => m.canonical === f.name)
-      );
-
     if (missingRequired) {
-      alert("Map all required fields before confirming.");
+      setError("Map all required fields before confirming.");
       return;
     }
+
+    if (hasDuplicateTargets) {
+      setError("Each target field can only be mapped once.");
+      return;
+    }
+
+    const confirmedMappings = localMappings
+      .filter((mapping) => mapping.canonical)
+      .map((mapping) => ({
+        original: mapping.original,
+        canonical: mapping.canonical,
+      }));
 
     setIsSubmitting(true);
 
     try {
       await axios.post(
         `http://localhost:8000/api/map/${fileId}/confirm`,
-        { auto_confirm: true }
+        {
+          confirmed_mappings: confirmedMappings,
+        }
       );
 
       onComplete();
     } catch (err) {
-      setError(err?.response?.data?.detail || "Confirm failed");
+      setError(formatError(err, "Confirm failed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -93,18 +141,24 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
     return "bg-red-100 text-red-700";
   };
 
-  const hasMappings = localMappings.some((m) => m.canonical);
+  const getDetectedType = (originalName) => {
+    return (
+      detectedColumns.find((column) => column.original_name === originalName)
+        ?.inferred_type || "-"
+    );
+  };
 
   return (
     <div className="mt-6">
-      <h2 className="text-xl font-semibold mb-2">Mapping</h2>
-      <p className="text-sm text-gray-500 mb-4">fileId: {fileId}</p>
+      <h2 className="mb-2 text-xl font-semibold">Mapping</h2>
+      <p className="mb-4 text-sm text-gray-500">fileId: {fileId}</p>
 
-      <div className="mb-4">
+      <div className="mb-4 flex items-center gap-3">
         <select
           value={presetKey}
-          onChange={(e) => setPresetKey(e.target.value)}
-          className="border rounded px-3 py-2"
+          onChange={handlePresetChange}
+          disabled={isSubmitting}
+          className="rounded border px-3 py-2 disabled:opacity-50"
         >
           <option value="contact">Contact List</option>
           <option value="transaction">Transaction Log</option>
@@ -113,24 +167,24 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
         <button
           onClick={handleRunMapping}
           disabled={isSubmitting}
-          className="ml-3 rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50"
+          className="rounded bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSubmitting ? "Processing..." : "Run Mapping"}
         </button>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">
+        <div className="mb-4 rounded bg-red-100 p-3 text-red-700">
           {error}
         </div>
       )}
 
       {mappings.length > 0 && (
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-gray-50 border-b">
+        <table className="w-full border-collapse text-left">
+          <thead className="border-b bg-gray-50">
             <tr>
               <th className="px-4 py-2">Original</th>
-              <th className="px-4 py-2">Type</th>
+              <th className="px-4 py-2">Detected Type</th>
               <th className="px-4 py-2">Suggested Match</th>
               <th className="px-4 py-2">Confidence</th>
             </tr>
@@ -140,30 +194,33 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
             {mappings.map((mapping) => (
               <tr key={mapping.original} className="border-b">
                 <td className="px-4 py-2">{mapping.original}</td>
-                <td className="px-4 py-2">{mapping.inferred_type}</td>
+                <td className="px-4 py-2">
+                  {getDetectedType(mapping.original)}
+                </td>
 
                 <td className="px-4 py-2">
                   <select
                     value={
                       localMappings.find(
-                        (m) => m.original === mapping.original
+                        (item) => item.original === mapping.original
                       )?.canonical || ""
                     }
-                    onChange={(e) => {
+                    onChange={(event) => {
                       setLocalMappings((prev) =>
-                        prev.map((m) =>
-                          m.original === mapping.original
-                            ? { ...m, canonical: e.target.value }
-                            : m
+                        prev.map((item) =>
+                          item.original === mapping.original
+                            ? { ...item, canonical: event.target.value }
+                            : item
                         )
                       );
                     }}
-                    className="border rounded px-2 py-1 w-full"
+                    className="w-full rounded border px-2 py-1"
                   >
                     <option value="">(skip)</option>
                     {selectedSchema.map((field) => (
                       <option key={field.name} value={field.name}>
                         {field.name}
+                        {field.required ? " *" : ""}
                       </option>
                     ))}
                   </select>
@@ -171,7 +228,7 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
 
                 <td className="px-4 py-2">
                   <span
-                    className={`px-2 py-1 rounded text-sm ${getConfidenceClass(
+                    className={`rounded px-2 py-1 text-sm ${getConfidenceClass(
                       mapping.confidence
                     )}`}
                   >
@@ -185,13 +242,27 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
       )}
 
       {mappings.length > 0 && (
-        <button
-          onClick={handleConfirm}
-          disabled={isSubmitting || !hasMappings}
-          className="mt-6 rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isSubmitting ? "Processing..." : "Confirm Mappings"}
-        </button>
+        <div className="mt-6">
+          {missingRequired && (
+            <p className="mb-2 text-sm text-red-600">
+              Required fields must be mapped before continuing.
+            </p>
+          )}
+
+          {hasDuplicateTargets && (
+            <p className="mb-2 text-sm text-red-600">
+              Each target field can only be mapped once.
+            </p>
+          )}
+
+          <button
+            onClick={handleConfirm}
+            disabled={confirmDisabled}
+            className="rounded bg-slate-900 px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSubmitting ? "Processing..." : "Confirm Mappings"}
+          </button>
+        </div>
       )}
     </div>
   );
