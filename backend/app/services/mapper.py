@@ -3,6 +3,72 @@ from typing import Any
 from rapidfuzz import fuzz
 
 
+CANONICAL_COLUMNS = {
+    "first_name": [
+        "fname",
+        "first name",
+        "firstname",
+        "given name",
+        "given_name",
+    ],
+    "last_name": [
+        "lname",
+        "last name",
+        "lastname",
+        "surname",
+        "family name",
+        "family_name",
+    ],
+    "email": [
+        "email address",
+        "email_address",
+        "e-mail",
+        "mail",
+        "mail id",
+        "mail_id",
+    ],
+    "phone": [
+        "phone number",
+        "phone_number",
+        "ph no",
+        "ph_no",
+        "mobile",
+        "mobile number",
+        "contact",
+        "contact number",
+    ],
+    "date": [
+        "transaction date",
+        "txn date",
+        "created date",
+        "signup date",
+        "registered on",
+    ],
+    "signup_date": [
+        "signup date",
+        "registered on",
+        "registration date",
+        "created date",
+        "date joined",
+    ],
+    "amount": [
+        "amt",
+        "total amount",
+        "transaction amount",
+        "price",
+        "cost",
+        "amount usd",
+    ],
+    "description": [
+        "desc",
+        "details",
+        "memo",
+        "notes",
+        "transaction description",
+    ],
+}
+
+
 class MapperService:
     MIN_CONFIDENCE = 0.60
 
@@ -11,64 +77,84 @@ class MapperService:
         detected_columns: list[dict[str, Any]],
         target_schema: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        canonical_lookup = self._build_canonical_lookup(target_schema)
-
-        suggestions: list[dict[str, Any]] = []
+        mappings = []
 
         for column in detected_columns:
-            original_name = str(column["original_name"])
-            suggested_canonical, confidence = self._fuzzy_match(
-                original_name,
-                canonical_lookup,
+            original_name = column["original_name"]
+
+            exact_match = self._find_exact_synonym_match(
+                source_name=original_name,
+                target_schema=target_schema,
             )
 
-            suggestions.append(
+            if exact_match:
+                mappings.append(
+                    {
+                        "original": original_name,
+                        "suggested_canonical": exact_match,
+                        "confidence": 1.0,
+                    }
+                )
+                continue
+
+            best_match = None
+            best_score = 0.0
+
+            for field in target_schema:
+                canonical_name = field["name"]
+
+                candidates = [
+                    canonical_name,
+                    *field.get("variants", []),
+                    *CANONICAL_COLUMNS.get(canonical_name, []),
+                ]
+
+                for candidate in candidates:
+                    score = fuzz.token_sort_ratio(
+                        self._readable_name(original_name),
+                        self._readable_name(candidate),
+                    ) / 100
+
+                    if score > best_score:
+                        best_score = score
+                        best_match = canonical_name
+
+            mappings.append(
                 {
                     "original": original_name,
-                    "suggested_canonical": suggested_canonical,
-                    "confidence": round(confidence, 2),
+                    "suggested_canonical": (
+                        best_match if best_score >= self.MIN_CONFIDENCE else None
+                    ),
+                    "confidence": round(best_score, 2),
                 }
             )
 
-        return suggestions
+        return mappings
 
-    def _build_canonical_lookup(
+    def _find_exact_synonym_match(
         self,
+        source_name: str,
         target_schema: list[dict[str, Any]],
-    ) -> dict[str, list[str]]:
-        lookup: dict[str, list[str]] = {}
+    ) -> str | None:
+        normalized_source = self._normalize_name(source_name)
 
         for field in target_schema:
-            canonical_name = str(field["name"]).strip()
-            variants = field.get("variants", [])
+            canonical_name = field["name"]
 
-            all_variants = [canonical_name, *variants]
-            normalized_variants = [
-                str(value).strip()
-                for value in all_variants
-                if str(value).strip()
+            candidates = [
+                canonical_name,
+                *field.get("variants", []),
+                *CANONICAL_COLUMNS.get(canonical_name, []),
             ]
 
-            lookup[canonical_name] = normalized_variants
+            for candidate in candidates:
+                if self._normalize_name(candidate) == normalized_source:
+                    return canonical_name
 
-        return lookup
+        return None
 
-    def _fuzzy_match(
-        self,
-        input_name: str,
-        canonical_lookup: dict[str, list[str]],
-    ) -> tuple[str | None, float]:
-        best_canonical: str | None = None
-        best_score = 0.0
+    def _normalize_name(self, value: str) -> str:
+        return "".join(char for char in value.lower() if char.isalnum())
 
-        for canonical_name, variants in canonical_lookup.items():
-            for variant in variants:
-                score = fuzz.token_sort_ratio(input_name, variant) / 100.0
-                if score > best_score:
-                    best_score = score
-                    best_canonical = canonical_name
-
-        if best_score < self.MIN_CONFIDENCE:
-            return None, best_score
-
-        return best_canonical, best_score
+    def _readable_name(self, value: str) -> str:
+        return value.replace("_", " ").replace("-", " ").strip().lower()
