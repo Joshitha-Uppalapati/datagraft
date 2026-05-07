@@ -1,5 +1,5 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "./api";
 
 const PRESETS = {
   contact: [
@@ -69,8 +69,8 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
     setIsSubmitting(true);
 
     try {
-      const res = await axios.post(
-        `http://localhost:8000/api/map/${fileId}`,
+      const res = await api.post(
+        `/api/map/${fileId}`,
         {
           target_schema: selectedSchema.map((field) => ({
             name: field.name,
@@ -120,8 +120,8 @@ function MappingPage({ fileId, detectedColumns = [], onComplete }) {
     setIsSubmitting(true);
 
     try {
-      await axios.post(
-        `http://localhost:8000/api/map/${fileId}/confirm`,
+      await api.post(
+        `/api/map/${fileId}/confirm`,
         {
           confirmed_mappings: confirmedMappings,
         }

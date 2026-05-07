@@ -1,5 +1,7 @@
+import { API_BASE_URL } from "./api";
+
 function ExportPage({ fileId, validationSummary, onRestart }) {
-  const downloadUrl = `http://localhost:8000/api/export/${fileId}`;
+  const downloadUrl = `${API_BASE_URL}/api/export/${fileId}`;
 
   return (
     <div className="mt-10 flex justify-center">
@@ -32,7 +34,7 @@ function ExportPage({ fileId, validationSummary, onRestart }) {
           </a>
 
           <a
-            href="http://localhost:8000/api/history"
+            href={`${API_BASE_URL}/api/history`}
             target="_blank"
             rel="noreferrer"
             className="rounded border px-4 py-2 text-gray-700"

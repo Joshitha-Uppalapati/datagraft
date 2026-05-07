@@ -1,5 +1,5 @@
 import { useState } from "react";
-import axios from "axios";
+import api from "./api";
 
 function UploadPage({ onSuccess }) {
   const [file, setFile] = useState(null);
@@ -19,16 +19,11 @@ function UploadPage({ onSuccess }) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const uploadRes = await axios.post(
-        "http://localhost:8000/api/upload",
-        formData
-      );
+      const uploadRes = await api.post("/api/upload", formData);
 
       const fileId = uploadRes.data.file_id;
 
-      const detectRes = await axios.get(
-        `http://localhost:8000/api/detect/${fileId}`
-      );
+      const detectRes = await api.get(`/api/detect/${fileId}`);
 
       onSuccess({
         file_id: fileId,

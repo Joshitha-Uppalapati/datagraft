@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import axios from "axios";
+import api from "./api";
 
 function ValidationPage({ fileId, onProceedToExport }) {
   const [data, setData] = useState(null);
@@ -13,9 +13,8 @@ function ValidationPage({ fileId, onProceedToExport }) {
       setError(null);
 
       try {
-        const res = await axios.get(
-          `http://localhost:8000/api/validate/${fileId}`
-        );
+        const res = await api.get(`/api/validate/${fileId}`);
+        
         setData(res.data);
       } catch (err) {
         setError(err?.response?.data?.detail || "Validation failed.");
