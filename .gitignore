@@ -7,3 +7,10 @@ test-data/
 
 .DS_Storedata/
 fbc6c84f-*
+
+# Demo fixtures committed for DataGraft walkthroughs
+!test-data/
+test-data/*
+!test-data/clean_100_rows.csv
+!test-data/mixed_dates.csv
+!test-data/duplicates.csv

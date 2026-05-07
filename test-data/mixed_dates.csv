@@ -1,0 +1,6 @@
+first_name,email,signup_date,amount
+Josh,josh@example.com,2024-01-15,12.50
+Jane,jane@example.com,01/20/2024,22.75
+Sam,sam@example.com,March 5 2024,18.00
+Ava,ava@example.com,2024/04/10,31.25
+Bad,bad@example.com,not-a-date,9.99
