@@ -1,16 +1,19 @@
 .env
+.DS_Store
 
-# local data artifacts
+# local runtime data
 data/
-test-data/
+
+# local scratch CSVs
 *.csv
 
-.DS_Store
-data/
-
-# Demo fixtures committed for DataGraft walkthroughs
+# committed demo fixtures
 !test-data/
 test-data/*
 !test-data/clean_100_rows.csv
+!test-data/messy_columns.csv
 !test-data/mixed_dates.csv
+!test-data/bad_emails.csv
 !test-data/duplicates.csv
+!test-data/nulls_everywhere.csv
+!test-data/large_5000_rows.csv

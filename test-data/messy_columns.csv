@@ -1,0 +1,5 @@
+fname,email address,ph no,signup date,amt
+Josh,josh@example.com,1234567890,2024-01-15,$12.50
+Jane,jane@example.com,9876543210,2024-02-20,$22.75
+Bad,bad-email,123,not-a-date,$abc
+Josh,josh@example.com,1234567890,2024-01-15,$12.50
