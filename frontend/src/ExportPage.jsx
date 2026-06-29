@@ -1,6 +1,6 @@
 import { API_BASE_URL } from "./api";
 
-function ExportPage({ fileId, validationSummary, onRestart }) {
+function ExportPage({ fileId, validationSummary, onRestart, onViewHistory }) {
   const downloadUrl = `${API_BASE_URL}/api/export/${fileId}`;
 
   return (
@@ -28,23 +28,21 @@ function ExportPage({ fileId, validationSummary, onRestart }) {
         <div className="flex flex-col gap-3">
           <a
             href={downloadUrl}
-            className="rounded bg-slate-900 px-4 py-2 text-white"
+            className="rounded bg-slate-900 px-4 py-2 text-white hover:bg-slate-800"
           >
             Download Clean CSV
           </a>
 
-          <a
-            href={`${API_BASE_URL}/api/history`}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded border px-4 py-2 text-gray-700"
+          <button
+            onClick={onViewHistory}
+            className="rounded border px-4 py-2 text-gray-700 hover:bg-gray-50"
           >
             View History
-          </a>
+          </button>
 
           <button
             onClick={onRestart}
-            className="rounded border px-4 py-2 text-gray-700"
+            className="rounded border px-4 py-2 text-gray-700 hover:bg-gray-50"
           >
             Start New Import
           </button>
